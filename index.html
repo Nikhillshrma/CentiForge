@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CertiForge — Automated Certificate Generator &amp; Smart Bulk Mailer</title>
+  <meta name="description" content="Generate personalized certificates from Excel/CSV data on an interactive canvas and bulk-email them via your own SMTP." />
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ink: { 950: '#07090f', 900: '#0b0f19', 800: '#111827', 700: '#1a2233', 600: '#242f45', 500: '#334155' },
+            brand: { 400: '#a78bfa', 500: '#8b5cf6', 600: '#7c3aed' },
+            accent: { 400: '#22d3ee', 500: '#06b6d4' }
+          },
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          boxShadow: { glow: '0 0 0 1px rgba(139,92,246,.35), 0 10px 40px -10px rgba(139,92,246,.45)' }
+        }
+      }
+    };
+  </script>
+
+  <!-- Google Fonts: UI + certificate fonts (preloaded so canvas can use them) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Great+Vibes&family=Dancing+Script:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,600;0,700;1,400;1,700&family=Alex+Brush&family=Sacramento&display=swap" rel="stylesheet" />
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body class="bg-ink-950 text-slate-200 font-sans min-h-screen antialiased">
+
+  <!-- Hidden font warm-up spans (forces browser to load certificate fonts for canvas) -->
+  <div aria-hidden="true" class="font-warmup">
+    <span style="font-family:'Great Vibes'">.</span>
+    <span style="font-family:'Dancing Script'">.</span>
+    <span style="font-family:'Playfair Display'">.</span>
+    <span style="font-family:'Montserrat'">.</span>
+    <span style="font-family:'Alex Brush'">.</span>
+    <span style="font-family:'Sacramento'">.</span>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- HEADER -->
+  <!-- ====================================================================== -->
+  <header class="sticky top-0 z-40 border-b border-ink-700/70 bg-ink-900/80 backdrop-blur">
+    <div class="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+      <div class="flex items-center gap-3">
+        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 shadow-glow">
+          <i class="fa-solid fa-certificate text-white text-lg"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold leading-tight tracking-tight text-white">CertiForge</h1>
+          <p class="text-[11px] text-slate-400 leading-tight">Automated Certificate Generator &amp; Smart Bulk Mailer</p>
+        </div>
+      </div>
+
+      <nav class="flex flex-wrap items-center gap-2 w-full justify-end sm:w-auto" aria-label="Primary actions">
+        <span id="serverStatus" class="hidden items-center gap-1.5 rounded-full border border-ink-600 px-3 py-1 text-xs text-slate-400 md:inline-flex">
+          <span class="h-2 w-2 rounded-full bg-slate-500" id="serverDot"></span><span id="serverText">Checking server…</span>
+        </span>
+        <button id="btnSmtp" class="btn-ghost" title="SMTP Settings">
+          <i class="fa-solid fa-server"></i><span class="hidden sm:inline">SMTP</span>
+        </button>
+        <button id="btnDownloadPreview" class="btn-ghost" title="Download PNG of current preview row">
+          <i class="fa-solid fa-image"></i><span class="hidden sm:inline">Preview PNG</span>
+        </button>
+        <button id="btnDownloadZip" class="btn-ghost" title="Render all certificates and download as ZIP">
+          <i class="fa-solid fa-file-zipper"></i><span class="hidden sm:inline">Download ZIP</span>
+        </button>
+        <button id="btnCompose" class="btn-primary" title="Compose &amp; send emails">
+          <i class="fa-solid fa-paper-plane"></i><span>Send Emails</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ====================================================================== -->
+  <!-- MAIN WORKSPACE -->
+  <!-- ====================================================================== -->
+  <main class="mx-auto grid max-w-[1800px] grid-cols-1 gap-4 p-4 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
+
+    <!-- ================= LEFT: IMPORT & VARIABLES ================= -->
+    <aside class="space-y-4" aria-label="Import panel">
+
+      <!-- Step 1: Template -->
+      <section class="card">
+        <header class="card-head">
+          <span class="step">1</span>
+          <h2>Certificate Template</h2>
+        </header>
+        <div id="templateDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload certificate template image">
+          <input type="file" id="templateInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg" class="hidden" />
+          <i class="fa-regular fa-image text-3xl text-brand-400"></i>
+          <p class="mt-2 text-sm font-medium">Drop template image here</p>
+          <p class="text-xs text-slate-500">PNG / JPG / JPEG</p>
+        </div>
+        <p id="templateMeta" class="mt-2 hidden text-xs text-slate-400"></p>
+      </section>
+
+      <!-- Step 2: Dataset -->
+      <section class="card">
+        <header class="card-head">
+          <span class="step">2</span>
+          <h2>Dataset (Excel / CSV)</h2>
+        </header>
+        <div id="dataDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload Excel or CSV dataset">
+          <input type="file" id="dataInput" accept=".xlsx,.xls,.csv" class="hidden" />
+          <i class="fa-solid fa-file-excel text-3xl text-emerald-400"></i>
+          <p class="mt-2 text-sm font-medium">Drop .xlsx / .xls / .csv</p>
+          <p class="text-xs text-slate-500">Headers in first row (Name, Email, …)</p>
+        </div>
+        <p id="dataMeta" class="mt-2 hidden text-xs text-slate-400"></p>
+        <button id="btnLoadSample" class="mt-3 w-full text-xs text-brand-400 hover:text-brand-300 underline-offset-2 hover:underline">
+          <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>Load sample dataset for testing
+        </button>
+      </section>
+
+      <!-- Step 3: Variables -->
+      <section class="card">
+        <header class="card-head">
+          <span class="step">3</span>
+          <h2>Variable Chips</h2>
+        </header>
+        <p class="mb-2 text-xs text-slate-400">Drag a chip onto the canvas (or click to add at center).</p>
+        <div id="chipContainer" class="flex flex-wrap gap-2">
+          <p class="text-xs text-slate-500 italic" id="chipEmpty">Import a dataset to see columns.</p>
+        </div>
+        <div class="mt-3 border-t border-ink-700 pt-3">
+          <p class="mb-2 text-[11px] uppercase tracking-wider text-slate-500">Smart fields</p>
+          <div class="flex flex-wrap gap-2">
+            <button class="chip chip-smart" draggable="true" data-var="certificate_id" title="Unique hash per participant">
+              <i class="fa-solid fa-fingerprint"></i> certificate_id
+            </button>
+            <button class="chip chip-smart" draggable="true" data-var="qr_code" title="QR code with verification ID">
+              <i class="fa-solid fa-qrcode"></i> qr_code
+            </button>
+            <button class="chip chip-smart" draggable="true" data-var="date" title="Today's date">
+              <i class="fa-regular fa-calendar"></i> date
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Duplicate Email Handler -->
+      <section class="card">
+        <header class="card-head">
+          <span class="step"><i class="fa-solid fa-users text-[10px]"></i></span>
+          <h2>Duplicate Email Handler</h2>
+        </header>
+        <div class="mb-3 grid grid-cols-2 gap-2 text-xs">
+          <label class="field-label">Name column
+            <select id="nameColumn" class="input mt-1"></select>
+          </label>
+          <label class="field-label">Email column
+            <select id="emailColumn" class="input mt-1"></select>
+          </label>
+        </div>
+        <div class="space-y-2">
+          <label class="mode-option">
+            <input type="radio" name="dupMode" value="separate" checked class="mt-1 accent-brand-500" />
+            <span>
+              <span class="block text-sm font-medium text-white">Per-row (default)</span>
+              <span class="block text-xs text-slate-400">One certificate &amp; one email per row.</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="dupMode" value="consolidated" class="mt-1 accent-brand-500" />
+            <span>
+              <span class="block text-sm font-medium text-white">Consolidated single email</span>
+              <span class="block text-xs text-slate-400">Separate certificate per name, all attached to one email per address.</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="dupMode" value="combined" class="mt-1 accent-brand-500" />
+            <span>
+              <span class="block text-sm font-medium text-white">Combined names on one certificate</span>
+              <span class="block text-xs text-slate-400">"Rahul Sharma, Aman Verma &amp; Rohit Sen" auto-fitted on a single certificate.</span>
+            </span>
+          </label>
+        </div>
+        <div id="dupSummary" class="mt-3 rounded-lg border border-ink-700 bg-ink-900/60 p-2 text-xs text-slate-400">
+          No dataset loaded.
+        </div>
+      </section>
+    </aside>
+
+    <!-- ================= CENTER: CANVAS ================= -->
+    <section class="space-y-4 min-w-0" aria-label="Certificate canvas">
+      <div class="card p-0 overflow-hidden">
+        <!-- Canvas toolbar -->
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-ink-700 px-4 py-2.5">
+          <div class="flex items-center gap-2 text-sm">
+            <i class="fa-solid fa-eye text-brand-400"></i>
+            <span class="text-slate-400">Preview row</span>
+            <button id="btnPrevRow" class="icon-btn" title="Previous row"><i class="fa-solid fa-chevron-left"></i></button>
+            <select id="rowSelect" class="input !w-auto !py-1 max-w-[220px]"></select>
+            <button id="btnNextRow" class="icon-btn" title="Next row"><i class="fa-solid fa-chevron-right"></i></button>
+            <span id="rowCounter" class="text-xs text-slate-500">0 / 0</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+              <input type="checkbox" id="toggleGuides" checked class="accent-brand-500" /> Guides
+            </label>
+            <button id="btnZoomOut" class="icon-btn" title="Zoom out"><i class="fa-solid fa-minus"></i></button>
+            <span id="zoomLabel" class="w-12 text-center text-xs text-slate-400">100%</span>
+            <button id="btnZoomIn" class="icon-btn" title="Zoom in"><i class="fa-solid fa-plus"></i></button>
+            <button id="btnZoomFit" class="icon-btn" title="Fit to screen"><i class="fa-solid fa-expand"></i></button>
+          </div>
+        </div>
+
+        <!-- Canvas stage -->
+        <div id="stage" class="stage">
+          <div id="stageEmpty" class="stage-empty">
+            <div class="grid h-16 w-16 place-items-center rounded-2xl bg-ink-700 text-brand-400">
+              <i class="fa-regular fa-image text-2xl"></i>
+            </div>
+            <p class="mt-3 text-sm font-medium text-slate-300">Upload a certificate template to begin</p>
+            <p class="text-xs text-slate-500">Then drop variable chips onto the canvas and style them.</p>
+          </div>
+          <div id="canvasWrap" class="canvas-wrap hidden">
+            <canvas id="certCanvas" aria-label="Certificate preview canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- Status line -->
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-ink-700 px-4 py-2 text-xs text-slate-500">
+          <span id="canvasHint">Tip: click a field to select; drag to move; Delete key removes it. Arrow keys nudge (Shift = 10px).</span>
+          <span id="canvasSize"></span>
+        </div>
+      </div>
+
+      <!-- Data preview table -->
+      <section class="card p-0 overflow-hidden">
+        <header class="flex items-center justify-between border-b border-ink-700 px-4 py-2.5">
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-white"><i class="fa-solid fa-table text-emerald-400"></i> Dataset Preview</h2>
+          <div class="flex items-center gap-3 text-xs text-slate-400">
+            <span id="tableMeta">0 rows</span>
+            <span id="groupMeta" class="hidden rounded-full bg-brand-500/15 px-2 py-0.5 text-brand-300"></span>
+          </div>
+        </header>
+        <div class="max-h-72 overflow-auto">
+          <table id="dataTable" class="data-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+          <p id="tableEmpty" class="p-6 text-center text-xs text-slate-500 italic">No data yet. Import an Excel or CSV file.</p>
+        </div>
+      </section>
+    </section>
+
+    <!-- ================= RIGHT: PROPERTIES ================= -->
+    <aside class="space-y-4" aria-label="Typography panel">
+
+      <!-- Layers -->
+      <section class="card">
+        <header class="card-head">
+          <i class="fa-solid fa-layer-group text-brand-400"></i>
+          <h2>Fields on Canvas</h2>
+        </header>
+        <ul id="layerList" class="space-y-1.5 text-sm">
+          <li class="text-xs text-slate-500 italic">No fields yet.</li>
+        </ul>
+      </section>
+
+      <!-- Typography -->
+      <section class="card" id="propsPanel">
+        <header class="card-head">
+          <i class="fa-solid fa-font text-accent-400"></i>
+          <h2>Typography</h2>
+          <span id="propsTarget" class="ml-auto truncate rounded-full bg-ink-700 px-2 py-0.5 text-[11px] text-slate-300">none</span>
+        </header>
+
+        <div id="propsEmpty" class="text-xs text-slate-500 italic">Select a field on the canvas to edit its style.</div>
+
+        <div id="propsForm" class="hidden space-y-3 text-xs">
+          <!-- QR-only -->
+          <div id="qrProps" class="hidden space-y-2">
+            <label class="field-label">QR Size (px)
+              <input type="range" id="pQrSize" min="40" max="800" step="2" class="w-full accent-brand-500" />
+              <span class="flex justify-between"><span>40</span><span id="pQrSizeVal" class="text-white"></span><span>800</span></span>
+            </label>
+            <label class="field-label">Verification URL prefix
+              <input type="text" id="pQrPrefix" class="input mt-1" placeholder="https://verify.example.com/" />
+            </label>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="field-label">Dark color<input type="color" id="pQrDark" class="input-color mt-1" /></label>
+              <label class="field-label">Light color<input type="color" id="pQrLight" class="input-color mt-1" /></label>
+            </div>
+          </div>
+
+          <!-- Text props -->
+          <div id="textProps" class="space-y-3">
+            <label class="field-label">Font family
+              <select id="pFont" class="input mt-1">
+                <option value="Great Vibes">Great Vibes</option>
+                <option value="Dancing Script">Dancing Script</option>
+                <option value="Playfair Display">Playfair Display</option>
+                <option value="Montserrat">Montserrat</option>
+                <option value="Alex Brush">Alex Brush</option>
+                <option value="Sacramento">Sacramento</option>
+                <option value="Arial">Arial</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Times New Roman">Times New Roman</option>
+              </select>
+            </label>
+
+            <div class="grid grid-cols-2 gap-2">
+              <label class="field-label">Font size (px)
+                <input type="number" id="pSize" min="6" max="600" class="input mt-1" />
+              </label>
+              <label class="field-label">Color
+                <div class="mt-1 flex gap-1">
+                  <input type="color" id="pColor" class="input-color" />
+                  <input type="text" id="pColorHex" class="input !px-2 uppercase" maxlength="7" placeholder="#000000" />
+                </div>
+              </label>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <span class="field-label">Style</span>
+                <div class="mt-1 seg">
+                  <button type="button" id="pBold" class="seg-btn font-bold" title="Bold">B</button>
+                  <button type="button" id="pItalic" class="seg-btn italic" title="Italic">I</button>
+                </div>
+              </div>
+              <div>
+                <span class="field-label">Align (anchor)</span>
+                <div class="mt-1 seg" id="pAlign">
+                  <button type="button" class="seg-btn" data-align="left" title="Left"><i class="fa-solid fa-align-left"></i></button>
+                  <button type="button" class="seg-btn" data-align="center" title="Center"><i class="fa-solid fa-align-center"></i></button>
+                  <button type="button" class="seg-btn" data-align="right" title="Right"><i class="fa-solid fa-align-right"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span class="field-label">Text transform</span>
+              <div class="mt-1 seg" id="pTransform">
+                <button type="button" class="seg-btn" data-transform="none" title="None">—</button>
+                <button type="button" class="seg-btn" data-transform="uppercase" title="Uppercase">AA</button>
+                <button type="button" class="seg-btn" data-transform="lowercase" title="Lowercase">aa</button>
+                <button type="button" class="seg-btn" data-transform="capitalize" title="Capitalize">Ab</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <label class="field-label">Letter spacing (px)
+                <input type="number" id="pSpacing" min="-10" max="100" step="0.5" class="input mt-1" />
+              </label>
+              <label class="field-label">Max width (auto-fit)
+                <input type="number" id="pMaxWidth" min="0" step="10" class="input mt-1" placeholder="0 = off" />
+              </label>
+            </div>
+
+            <!-- Shadow -->
+            <div class="rounded-lg border border-ink-700 p-2">
+              <label class="flex items-center justify-between cursor-pointer">
+                <span class="font-medium text-slate-300">Text shadow</span>
+                <input type="checkbox" id="pShadow" class="accent-brand-500" />
+              </label>
+              <div id="shadowControls" class="mt-2 grid grid-cols-2 gap-2 opacity-50">
+                <label class="field-label">Blur<input type="number" id="pShBlur" min="0" max="100" class="input mt-1" /></label>
+                <label class="field-label">Color<input type="color" id="pShColor" class="input-color mt-1" /></label>
+                <label class="field-label">Offset X<input type="number" id="pShX" min="-100" max="100" class="input mt-1" /></label>
+                <label class="field-label">Offset Y<input type="number" id="pShY" min="-100" max="100" class="input mt-1" /></label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Position -->
+          <div class="grid grid-cols-2 gap-2">
+            <label class="field-label">X<input type="number" id="pX" class="input mt-1" /></label>
+            <label class="field-label">Y<input type="number" id="pY" class="input mt-1" /></label>
+          </div>
+
+          <!-- Per-row override -->
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
+            <label class="flex items-center justify-between cursor-pointer">
+              <span class="font-medium text-amber-300"><i class="fa-solid fa-user-pen mr-1"></i>Override for current row only</span>
+              <input type="checkbox" id="pOverride" class="accent-amber-500" />
+            </label>
+            <p class="mt-1 text-[11px] text-slate-400">When on, size &amp; position changes apply only to the previewed row (<span id="overrideRowLabel">—</span>).</p>
+            <div id="overrideList" class="mt-1 text-[11px] text-amber-200/80"></div>
+          </div>
+
+          <div class="flex gap-2 pt-1">
+            <button id="btnDuplicateField" class="btn-ghost flex-1 !justify-center"><i class="fa-solid fa-clone"></i>Duplicate</button>
+            <button id="btnDeleteField" class="btn-danger flex-1 !justify-center"><i class="fa-solid fa-trash"></i>Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Export / IDs -->
+      <section class="card">
+        <header class="card-head">
+          <i class="fa-solid fa-download text-emerald-400"></i>
+          <h2>Export Settings</h2>
+        </header>
+        <label class="field-label text-xs">File name pattern
+          <input type="text" id="fileNamePattern" class="input mt-1" value="{{roll}}_{{name}}_Certificate" />
+          <span class="mt-1 block text-[11px] text-slate-500">Use any column as <code>{{column}}</code>. Missing columns are skipped.</span>
+        </label>
+        <label class="mt-3 block field-label text-xs">Certificate ID prefix
+          <input type="text" id="idPrefix" class="input mt-1" value="CF" />
+        </label>
+        <label class="mt-3 block field-label text-xs">Email delay (ms between messages)
+          <input type="number" id="sendDelay" class="input mt-1" value="1500" min="0" step="100" />
+        </label>
+      </section>
+    </aside>
+  </main>
+
+  <!-- ====================================================================== -->
+  <!-- SMTP MODAL -->
+  <!-- ====================================================================== -->
+  <div id="smtpModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="smtpTitle">
+    <div class="modal-box max-w-lg">
+      <header class="modal-head">
+        <h3 id="smtpTitle"><i class="fa-solid fa-server text-brand-400 mr-2"></i>SMTP Configuration</h3>
+        <button class="icon-btn" data-close="smtpModal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="space-y-3 p-5 text-sm">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px]">
+          <label class="field-label">SMTP Host<input id="smtpHost" class="input mt-1" placeholder="smtp.gmail.com" /></label>
+          <label class="field-label">Port<input id="smtpPort" type="number" class="input mt-1" placeholder="465" value="465" /></label>
+        </div>
+        <label class="field-label">Username / Email<input id="smtpUser" type="email" class="input mt-1" placeholder="you@example.com" autocomplete="username" /></label>
+        <label class="field-label">Password / App Password
+          <div class="relative mt-1">
+            <input id="smtpPass" type="password" class="input pr-10" placeholder="••••••••••••" autocomplete="current-password" />
+            <button type="button" id="togglePass" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white" aria-label="Toggle password visibility"><i class="fa-regular fa-eye"></i></button>
+          </div>
+        </label>
+        <label class="field-label">From Name<input id="smtpFrom" class="input mt-1" placeholder="Event Committee" /></label>
+        <label class="flex items-center gap-2 text-xs text-slate-400">
+          <input type="checkbox" id="smtpSecure" checked class="accent-brand-500" /> Use SSL/TLS (port 465). Uncheck for STARTTLS on 587.
+        </label>
+        <label class="flex items-center gap-2 text-xs text-slate-400">
+          <input type="checkbox" id="smtpRemember" class="accent-brand-500" /> Remember settings in this browser (password stored locally)
+        </label>
+        <div id="smtpStatus" class="hidden rounded-lg px-3 py-2 text-xs"></div>
+      </div>
+      <footer class="modal-foot">
+        <button id="btnTestSmtp" class="btn-ghost"><i class="fa-solid fa-plug-circle-check"></i>Test Connection</button>
+        <button id="btnSaveSmtp" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i>Save</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- EMAIL COMPOSER MODAL -->
+  <!-- ====================================================================== -->
+  <div id="composeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="composeTitle">
+    <div class="modal-box max-w-3xl">
+      <header class="modal-head">
+        <h3 id="composeTitle"><i class="fa-solid fa-envelope-open-text text-accent-400 mr-2"></i>Compose Email</h3>
+        <button class="icon-btn" data-close="composeModal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="grid gap-4 p-5 text-sm md:grid-cols-[1fr_200px]">
+        <div class="space-y-3 min-w-0">
+          <label class="field-label">Subject
+            <input id="emailSubject" class="input mt-1" value="Your Certificate — {{name}}" />
+          </label>
+          <div>
+            <span class="field-label">Body</span>
+            <div class="mt-1 rounded-t-lg border border-b-0 border-ink-600 bg-ink-800 px-2 py-1 flex flex-wrap gap-1" id="rteToolbar">
+              <button type="button" class="rte-btn font-bold" data-cmd="bold" title="Bold">B</button>
+              <button type="button" class="rte-btn italic" data-cmd="italic" title="Italic">I</button>
+              <button type="button" class="rte-btn underline" data-cmd="underline" title="Underline">U</button>
+              <span class="mx-1 w-px bg-ink-600"></span>
+              <button type="button" class="rte-btn" data-cmd="insertUnorderedList" title="Bullets"><i class="fa-solid fa-list-ul"></i></button>
+              <button type="button" class="rte-btn" data-cmd="insertOrderedList" title="Numbered"><i class="fa-solid fa-list-ol"></i></button>
+              <span class="mx-1 w-px bg-ink-600"></span>
+              <button type="button" class="rte-btn" data-cmd="createLink" title="Link"><i class="fa-solid fa-link"></i></button>
+              <button type="button" class="rte-btn" data-cmd="removeFormat" title="Clear formatting"><i class="fa-solid fa-eraser"></i></button>
+            </div>
+            <div id="emailBody" class="rte" contenteditable="true" spellcheck="true"></div>
+          </div>
+          <div class="rounded-lg border border-ink-700 bg-ink-900/60 p-3">
+            <div class="mb-1 flex items-center justify-between text-xs text-slate-400">
+              <span><i class="fa-solid fa-eye mr-1"></i>Preview for first recipient</span>
+              <span id="composePlan" class="text-brand-300"></span>
+            </div>
+            <p id="previewSubject" class="text-xs font-semibold text-white"></p>
+            <div id="previewBody" class="prose-sm mt-1 text-xs text-slate-300 max-h-32 overflow-auto"></div>
+          </div>
+        </div>
+        <aside class="space-y-3">
+          <div>
+            <p class="mb-1 text-xs font-medium text-slate-300">Insert variable</p>
+            <p class="mb-2 text-[11px] text-slate-500">Click to insert at cursor.</p>
+            <div id="emailChips" class="flex flex-wrap gap-1.5"></div>
+          </div>
+          <div class="rounded-lg border border-ink-700 p-2 text-[11px] text-slate-400 space-y-1">
+            <p><code>{{all_names}}</code> → "Priya, Rahul and Aman"</p>
+            <p><code>{{count}}</code> → number of certificates</p>
+            <p><code>{{certificate_id}}</code> → unique ID(s)</p>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-400">
+            <input type="checkbox" id="sendOnlyFirst" class="accent-brand-500" /> Test: send only to first recipient
+          </label>
+        </aside>
+      </div>
+      <footer class="modal-foot">
+        <span id="composeSmtpState" class="mr-auto text-xs text-slate-400"></span>
+        <button class="btn-ghost" data-close="composeModal">Cancel</button>
+        <button id="btnSendAll" class="btn-primary"><i class="fa-solid fa-paper-plane"></i>Send Emails</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- PROGRESS DRAWER -->
+  <!-- ====================================================================== -->
+  <div id="progressModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="progressTitle">
+    <div class="modal-box max-w-2xl">
+      <header class="modal-head">
+        <h3 id="progressTitle"><i class="fa-solid fa-satellite-dish text-emerald-400 mr-2"></i><span id="progressHeading">Sending emails</span></h3>
+        <button class="icon-btn" data-close="progressModal" id="btnCloseProgress" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="p-5 space-y-4 text-sm">
+        <div>
+          <div class="mb-1 flex items-center justify-between text-xs text-slate-400">
+            <span id="progressLabel">Preparing…</span>
+            <span id="progressCount" class="font-semibold text-white">0 / 0</span>
+          </div>
+          <div class="h-2.5 w-full overflow-hidden rounded-full bg-ink-700">
+            <div id="progressBar" class="h-full w-0 rounded-full bg-gradient-to-r from-brand-500 to-accent-500 transition-all duration-300"></div>
+          </div>
+          <div class="mt-2 flex gap-3 text-xs">
+            <span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i><span id="statSuccess">0</span> success</span>
+            <span class="text-rose-400"><i class="fa-solid fa-circle-xmark mr-1"></i><span id="statFailed">0</span> failed</span>
+            <span class="text-slate-400"><i class="fa-regular fa-clock mr-1"></i><span id="statPending">0</span> pending</span>
+          </div>
+        </div>
+        <ul id="progressList" class="max-h-72 space-y-1 overflow-auto rounded-lg border border-ink-700 bg-ink-900/60 p-2 text-xs"></ul>
+      </div>
+      <footer class="modal-foot">
+        <button id="btnRetryFailed" class="btn-ghost hidden"><i class="fa-solid fa-rotate-right"></i>Retry Failed Emails</button>
+        <button id="btnDoneProgress" class="btn-primary" data-close="progressModal">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toasts" class="fixed bottom-4 right-4 z-[60] flex flex-col gap-2" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
